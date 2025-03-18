@@ -53,7 +53,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
         matrix:
-          os: [ windows-latest, ubuntu-latest, macOS-latest ]
+          os: [windows-latest, ubuntu-latest, macOS-latest]
         fail-fast: false
     steps:
       - name: Install Dependencies (Linux)
@@ -95,6 +95,10 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: aseprite
         run: |
+          # 创建 universal_bin 目录
+          mkdir -p universal_bin
+
+          # 分别构建 arm64 和 x64
           for arch in arm64 x64; do
             cmake -S . -B build-$arch -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
@@ -106,16 +110,23 @@ jobs:
               -DSKIA_LIBRARY_DIR=$(realpath skia-$arch/out/Release-$arch)
             cd build-$arch && ninja && cd ..
           done
-          mkdir -p universal_bin
+
+          # 合并二进制文件
           lipo -create -output universal_bin/aseprite build-arm64/bin/aseprite build-x64/bin/aseprite
+
+          # 复制数据文件（假设 arm64 和 x64 的 data 目录相同）
           cp -r build-arm64/bin/data universal_bin/
+
+          # 创建便携式配置文件
           echo '# This file is here so Aseprite behaves as a portable program' > universal_bin/aseprite.ini
 
-      - name: Create Release Package
+      - name: Create Release Package (macOS)
+        if: runner.os == 'macOS'
         working-directory: aseprite/universal_bin
         run: zip -r Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip *
 
       - name: Upload Release (macOS)
+        if: runner.os == 'macOS'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
