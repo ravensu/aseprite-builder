@@ -51,9 +51,15 @@ jobs:
       contents: write
     runs-on: ${{ matrix.os }}
     strategy:
-        matrix:
-          os: [ windows-latest, ubuntu-latest, macOS-latest ]
-        fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest, macOS-latest ]
+        arch: [ x64, arm64 ]
+        exclude:
+          - os: windows-latest
+            arch: arm64
+          - os: ubuntu-latest
+            arch: arm64
+      fail-fast: false
     steps:
       - name: Install Dependencies
         if: runner.os == 'Linux'
@@ -77,8 +83,8 @@ jobs:
             wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Windows-Release-x64.zip
             unzip Skia-Windows-Release-x64.zip -d skia
           elif [[ "${{ runner.os }}" == "macOS" ]] ; then
-            wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-macOS-Release-arm64.zip
-            unzip Skia-macOS-Release-arm64.zip -d skia
+            wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-macOS-Release-${{ matrix.arch }}.zip
+            unzip Skia-macOS-Release-${{ matrix.arch }}.zip -d skia
           else
             wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Linux-Release-x64.zip
             unzip Skia-Linux-Release-x64.zip -d skia
@@ -93,41 +99,44 @@ jobs:
           export enable_ccache=off
           export laf_backend=skia
           export enable_scripting=on
-
-          if [[ "${{ runner.os }}" == "macOS" ]] ; then
-            export skia_arch=arm64
-          else
-            export skia_arch=x64
-          fi
-
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
             -DENABLE_TESTS=OFF \
             -DENABLE_SCRIPTING=$enable_scripting \
             -DENABLE_CCACHE=$enable_ccache \
             -DLAF_BACKEND=$laf_backend \
             -DSKIA_DIR=$(realpath skia) \
-            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-$skia_arch)
+            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-${{ matrix.arch }})
       - name: Compiling
         shell: bash
         working-directory: aseprite
         run: |
           cd build && ninja
-      - name: Clean Up Build folder
-        working-directory: aseprite/build/bin
+      - name: Store artifacts for universal build
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v3
+        with:
+          name: aseprite-${{ matrix.arch }}
+          path: aseprite/build/bin/aseprite
+      - name: Create universal binary
+        if: runner.os == 'macOS' && matrix.arch == 'x64'
         shell: bash
-        run: find . -mindepth 1 ! \( -name 'aseprite' -o -name 'aseprite.exe' -o -name 'data' -prune \) -exec rm -rf {} +
+        run: |
+          mkdir -p universal_bin
+          curl -L -o aseprite-arm64 https://github.com/aseprite/aseprite/releases/download/${{ needs.create-release.outputs.release-tag }}/aseprite-arm64
+          lipo -create -output universal_bin/aseprite aseprite/build/bin/aseprite aseprite-arm64
       - name: Make portable zip
         working-directory: aseprite/build/bin
         run: echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
-      - name: Create release
+      - name: Create release zip
         working-directory: aseprite/build/bin
-        run: 7z -tzip a Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip *
+        run: 7z -tzip a Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}-${{ matrix.arch }}.zip *
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: aseprite/build/bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip
-          asset_name: Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip
+          file: aseprite/build/bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}-${{ matrix.arch }}.zip
+          asset_name: Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}-${{ matrix.arch }}.zip
           tag: ${{ needs.create-release.outputs.release-tag }}
