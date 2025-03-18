@@ -1,4 +1,4 @@
-name: Build and release Aseprite
+name: Build and release Aseprite (macOS x64)
 
 on:
   push:
@@ -46,91 +46,48 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   build-aseprite:
-    name: Build Aseprite
+    name: Build Aseprite (macOS x64)
     needs: create-release
     permissions:
       contents: write
-    runs-on: ${{ matrix.os }}
-    strategy:
-        matrix:
-          os: [windows-latest, ubuntu-latest, macOS-latest]
-        fail-fast: false
+    runs-on: macOS-latest
     steps:
-      - name: Install Dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
-            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
-
       - uses: actions/checkout@v4
 
       - name: Install Aseprite
         run: git clone --recurse-submodules -j8 https://github.com/aseprite/aseprite --branch ${{ needs.create-release.outputs.release-tag }}
 
-      - name: Install Skia
+      - name: Install Skia (macOS x64)
         working-directory: aseprite
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            choco install wget -y --no-progress
-            wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Windows-Release-x64.zip
-            unzip Skia-Windows-Release-x64.zip -d skia
-          elif [[ "${{ runner.os }}" == "macOS" ]]; then
-            wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-macOS-Release-arm64.zip
-            unzip Skia-macOS-Release-arm64.zip -d skia-arm64
-            wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-macOS-Release-x64.zip
-            unzip Skia-macOS-Release-x64.zip -d skia-x64
-          else
-            wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Linux-Release-x64.zip
-            unzip Skia-Linux-Release-x64.zip -d skia
-          fi
+          wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-macOS-Release-x64.zip
+          unzip Skia-macOS-Release-x64.zip -d skia
 
       - uses: aseprite/get-ninja@main
 
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-
-      - name: Build Aseprite (macOS Universal2)
-        if: runner.os == 'macOS'
+      - name: Build Aseprite (macOS x64)
         working-directory: aseprite
         run: |
-          # 创建 universal_bin 目录
-          mkdir -p universal_bin
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_SCRIPTING=ON \
+            -DENABLE_CCACHE=OFF \
+            -DLAF_BACKEND=skia \
+            -DSKIA_DIR=$(realpath skia) \
+            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-x64)
+          cd build && ninja
 
-          # 分别构建 arm64 和 x64
-          for arch in arm64 x64; do
-            cmake -S . -B build-$arch -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DENABLE_TESTS=OFF \
-              -DENABLE_SCRIPTING=ON \
-              -DENABLE_CCACHE=OFF \
-              -DLAF_BACKEND=skia \
-              -DSKIA_DIR=$(realpath skia-$arch) \
-              -DSKIA_LIBRARY_DIR=$(realpath skia-$arch/out/Release-$arch)
-            cd build-$arch && ninja && cd ..
-          done
+      - name: Create Release Package (macOS x64)
+        working-directory: aseprite/build/bin
+        run: |
+          echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
+          zip -r Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-x64.zip *
 
-          # 合并二进制文件
-          lipo -create -output universal_bin/aseprite build-arm64/bin/aseprite build-x64/bin/aseprite
-
-          # 复制数据文件（假设 arm64 和 x64 的 data 目录相同）
-          cp -r build-arm64/bin/data universal_bin/
-
-          # 创建便携式配置文件
-          echo '# This file is here so Aseprite behaves as a portable program' > universal_bin/aseprite.ini
-
-      - name: Create Release Package (macOS)
-        if: runner.os == 'macOS'
-        working-directory: aseprite/universal_bin
-        run: zip -r Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip *
-
-      - name: Upload Release (macOS)
-        if: runner.os == 'macOS'
+      - name: Upload Release (macOS x64)
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: aseprite/universal_bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip
-          asset_name: Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip
+          file: aseprite/build/bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-x64.zip
+          asset_name: Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-x64.zip
           tag: ${{ needs.create-release.outputs.release-tag }}
-          
