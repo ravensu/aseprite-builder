@@ -115,12 +115,6 @@ jobs:
         working-directory: aseprite/universal_bin
         run: zip -r Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip *
 
-      - name: Upload Release Artifact (macOS)
-        uses: actions/upload-artifact@v3
-        with:
-          name: Aseprite-macOS-universal
-          path: aseprite/universal_bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip
-
       - name: Upload Release (macOS)
         uses: svenstaro/upload-release-action@v2
         with:
@@ -128,3 +122,4 @@ jobs:
           file: aseprite/universal_bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip
           asset_name: Aseprite-${{ needs.create-release.outputs.release-tag }}-macOS-universal.zip
           tag: ${{ needs.create-release.outputs.release-tag }}
+          
