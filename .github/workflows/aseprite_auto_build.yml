@@ -232,14 +232,19 @@ jobs:
           with zipfile.ZipFile(archive) as zf:
             zf.extractall(target)
 
-          entries = [p for p in target.iterdir() if p.is_dir()]
-          if len(entries) != 1:
-            raise RuntimeError(f"Unexpected source zip structure: {entries}")
+          def looks_like_source_root(path):
+            return (path / "CMakeLists.txt").is_file() and (path / "laf").is_dir()
 
-          source_dir = entries[0]
           if pathlib.Path("aseprite").exists():
             shutil.rmtree("aseprite")
-          shutil.move(str(source_dir), "aseprite")
+
+          if looks_like_source_root(target):
+            shutil.move(str(target), "aseprite")
+          else:
+            source_dirs = [p for p in target.iterdir() if p.is_dir() and looks_like_source_root(p)]
+            if len(source_dirs) != 1:
+              raise RuntimeError(f"Unexpected source zip structure: {list(target.iterdir())}")
+            shutil.move(str(source_dirs[0]), "aseprite")
           PY
 
       - name: Download matching Skia package from source bundle metadata
