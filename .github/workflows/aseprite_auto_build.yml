@@ -3,6 +3,11 @@ name: Build and release Aseprite
 on:
   schedule:
     - cron: "20 */6 * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/aseprite_auto_build.yml"
   workflow_dispatch:
     inputs:
       aseprite_ref:
