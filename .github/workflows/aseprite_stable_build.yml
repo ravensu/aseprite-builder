@@ -1,0 +1,345 @@
+name: Build and release Aseprite stable
+
+on:
+  schedule:
+    - cron: "35 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      aseprite_ref:
+        description: "Stable Aseprite tag to build (e.g. v1.3.17). Leave empty to use latest stable release."
+        required: false
+        default: ""
+      force_rebuild:
+        description: "Build even if release assets already exist."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aseprite-stable-build
+  cancel-in-progress: false
+
+jobs:
+  resolve-version:
+    name: Resolve target stable version
+    runs-on: ubuntu-latest
+    outputs:
+      release-tag: ${{ steps.resolve.outputs.release-tag }}
+      source-url: ${{ steps.resolve.outputs.source-url }}
+      should-build: ${{ steps.resolve.outputs.should-build }}
+      reason: ${{ steps.resolve.outputs.reason }}
+    steps:
+      - name: Resolve stable Aseprite release and build decision
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ASEPRITE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aseprite_ref || '' }}
+          FORCE_REBUILD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rebuild || 'false' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+
+          token = os.environ["GITHUB_TOKEN"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          requested_ref = os.environ.get("ASEPRITE_REF", "").strip()
+          force_rebuild = os.environ.get("FORCE_REBUILD", "false").lower() == "true"
+          output_path = os.environ["GITHUB_OUTPUT"]
+
+          expected_assets = {
+              "windows-x64",
+              "macos-arm64",
+              "macos-x64",
+          }
+
+          source_asset_pattern = re.compile(r"^Aseprite-.*-Source\.zip$")
+
+          def api_get(url, *, auth_token=None):
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "aseprite-stable-build-workflow",
+              }
+              if auth_token:
+                  headers["Authorization"] = f"Bearer {auth_token}"
+
+              req = urllib.request.Request(
+                  url,
+                  headers=headers,
+              )
+              with urllib.request.urlopen(req) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+          def find_source_asset(release):
+              return next(
+                  (
+                      asset
+                      for asset in release.get("assets", [])
+                      if source_asset_pattern.match(asset.get("name", ""))
+                  ),
+                  None,
+              )
+
+          def assert_stable_release(release):
+              if release.get("draft") or release.get("prerelease"):
+                  tag = release.get("tag_name", requested_ref)
+                  raise RuntimeError(f"Tag {tag} is not a stable release.")
+
+          def get_release_for_tag(tag):
+              url = f"https://api.github.com/repos/aseprite/aseprite/releases/tags/{tag}"
+              return api_get(url)
+
+          def pick_latest_stable_release():
+              url = "https://api.github.com/repos/aseprite/aseprite/releases?per_page=50"
+              releases = api_get(url)
+              for release in releases:
+                  if release.get("draft") or release.get("prerelease"):
+                      continue
+                  source_asset = find_source_asset(release)
+                  if source_asset:
+                      return release, source_asset
+              raise RuntimeError("No stable release with a source zip was found in recent upstream releases.")
+
+          if requested_ref:
+              release = get_release_for_tag(requested_ref)
+              assert_stable_release(release)
+              source_asset = find_source_asset(release)
+              if source_asset is None:
+                  raise RuntimeError(f"Tag {requested_ref} does not contain a source zip asset.")
+          else:
+              release, source_asset = pick_latest_stable_release()
+
+          release_tag = release["tag_name"]
+          source_url = source_asset["browser_download_url"]
+
+          should_build = True
+          reason = "new_upstream_stable_release"
+          if not force_rebuild:
+              try:
+                  existing = api_get(
+                      f"https://api.github.com/repos/{repo}/releases/tags/{release_tag}",
+                      auth_token=token,
+                  )
+                  existing_names = {asset["name"] for asset in existing.get("assets", [])}
+                  expected_names = {
+                      f"Aseprite-{release_tag}-{suffix}.zip" for suffix in expected_assets
+                  }
+                  if expected_names.issubset(existing_names):
+                      should_build = False
+                      reason = "assets_already_exist"
+                  else:
+                      should_build = True
+                      reason = "stable_release_exists_assets_missing"
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      should_build = True
+                      reason = "stable_release_missing"
+                  else:
+                      raise
+          else:
+              reason = "force_rebuild"
+
+          with open(output_path, "a", encoding="utf-8") as f:
+              f.write(f"release-tag={release_tag}\n")
+              f.write(f"source-url={source_url}\n")
+              f.write(f"should-build={'true' if should_build else 'false'}\n")
+              f.write(f"reason={reason}\n")
+
+          print(f"Selected stable release: {release_tag}")
+          print(f"Decision: should_build={should_build} (reason={reason})")
+          PY
+
+      - name: Log decision
+        run: |
+          echo "release-tag=${{ steps.resolve.outputs.release-tag }}"
+          echo "source-url=${{ steps.resolve.outputs.source-url }}"
+          echo "should-build=${{ steps.resolve.outputs.should-build }}"
+          echo "reason=${{ steps.resolve.outputs.reason }}"
+
+  create-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs: resolve-version
+    if: needs.resolve-version.outputs.should-build == 'true'
+    steps:
+      - name: Ensure release exists
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.resolve-version.outputs.release-tag }}
+          name: Aseprite ${{ needs.resolve-version.outputs.release-tag }}
+          body: |
+            Automated stable build for upstream Aseprite `${{ needs.resolve-version.outputs.release-tag }}`.
+            Trigger reason: `${{ needs.resolve-version.outputs.reason }}`.
+          skipIfReleaseExists: true
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-aseprite:
+    name: Build stable ${{ matrix.asset_suffix }}
+    needs: [resolve-version, create-release]
+    if: needs.resolve-version.outputs.should-build == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            asset_suffix: windows-x64
+            skia_os: windows
+            skia_arch: x64
+            skia_lib_arch: x64
+            skia_library: skia.lib
+          - runner: macos-latest
+            asset_suffix: macos-arm64
+            skia_os: macos
+            skia_arch: arm64
+            skia_lib_arch: arm64
+            skia_library: libskia.a
+            cmake_osx_arch: arm64
+          - runner: macos-15-intel
+            asset_suffix: macos-x64
+            skia_os: macos
+            skia_arch: x64
+            skia_lib_arch: x64
+            skia_library: libskia.a
+            cmake_osx_arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aseprite/get-ninja@main
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Download Aseprite source archive
+        shell: bash
+        env:
+          SOURCE_URL: ${{ needs.resolve-version.outputs.source-url }}
+        run: |
+          set -euxo pipefail
+          curl --retry 5 --retry-all-errors -L -o aseprite-source.zip "$SOURCE_URL"
+
+      - name: Extract Aseprite source archive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python - <<'PY'
+          import pathlib
+          import shutil
+          import zipfile
+
+          archive = pathlib.Path("aseprite-source.zip")
+          target = pathlib.Path("aseprite-src")
+          if target.exists():
+            shutil.rmtree(target)
+          target.mkdir(parents=True, exist_ok=True)
+
+          with zipfile.ZipFile(archive) as zf:
+            zf.extractall(target)
+
+          def looks_like_source_root(path):
+            return (path / "CMakeLists.txt").is_file() and (path / "laf").is_dir()
+
+          if pathlib.Path("aseprite").exists():
+            shutil.rmtree("aseprite")
+
+          if looks_like_source_root(target):
+            shutil.move(str(target), "aseprite")
+          else:
+            source_dirs = [p for p in target.iterdir() if p.is_dir() and looks_like_source_root(p)]
+            if len(source_dirs) != 1:
+              raise RuntimeError(f"Unexpected source zip structure: {list(target.iterdir())}")
+            shutil.move(str(source_dirs[0]), "aseprite")
+          PY
+
+      - name: Download matching Skia package from source bundle metadata
+        shell: bash
+        run: |
+          set -euxo pipefail
+          skia_url="$(bash aseprite/laf/misc/skia-url.sh release ${{ matrix.skia_os }} ${{ matrix.skia_arch }})"
+          curl --retry 5 --retry-all-errors -L -o skia.zip "$skia_url"
+          python - <<'PY'
+          import pathlib
+          import shutil
+          import zipfile
+
+          skia_dir = pathlib.Path("aseprite/skia")
+          if skia_dir.exists():
+            shutil.rmtree(skia_dir)
+          skia_dir.mkdir(parents=True, exist_ok=True)
+
+          with zipfile.ZipFile("skia.zip") as zf:
+            zf.extractall(skia_dir)
+          PY
+
+      - name: Configure CMake (official-style settings)
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cmake_args=(
+            -S aseprite
+            -B aseprite/build
+            -G Ninja
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            -DENABLE_TESTS=OFF
+            -DENABLE_SCRIPTING=ON
+            -DENABLE_CCACHE=OFF
+            -DLAF_BACKEND=skia
+            -DSKIA_DIR="$(pwd)/aseprite/skia"
+            -DSKIA_LIBRARY_DIR="$(pwd)/aseprite/skia/out/Release-${{ matrix.skia_lib_arch }}"
+            -DSKIA_LIBRARY="$(pwd)/aseprite/skia/out/Release-${{ matrix.skia_lib_arch }}/${{ matrix.skia_library }}"
+          )
+
+          if [[ "${{ runner.os }}" == "macOS" ]] ; then
+            cmake_args+=(
+              -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+            )
+          fi
+
+          cmake "${cmake_args[@]}"
+
+      - name: Build aseprite target
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build aseprite/build --config RelWithDebInfo --target aseprite
+
+      - name: Package build artifact
+        id: package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.release-tag }}
+          ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+        run: |
+          set -euxo pipefail
+          asset_name="Aseprite-${RELEASE_TAG}-${ASSET_SUFFIX}.zip"
+          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ runner.os }}" == "Windows" ]] ; then
+            mkdir -p package/bin
+            cp -R aseprite/build/bin/* package/bin/
+            echo "# This file is here so Aseprite behaves as a portable program" > package/bin/aseprite.ini
+            (cd package && 7z a -tzip "../$asset_name" "bin/*")
+          else
+            test -d aseprite/build/bin/Aseprite.app
+            mkdir -p package
+            cp -R aseprite/build/bin/Aseprite.app package/
+            (cd package && ditto -c -k --sequesterRsrc --keepParent Aseprite.app "../$asset_name")
+          fi
+
+      - name: Upload release asset
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ steps.package.outputs.asset_name }}
+          asset_name: ${{ steps.package.outputs.asset_name }}
+          tag: ${{ needs.resolve-version.outputs.release-tag }}
+          overwrite: true
