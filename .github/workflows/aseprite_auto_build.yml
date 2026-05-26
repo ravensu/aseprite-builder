@@ -192,7 +192,7 @@ jobs:
             skia_arch: arm64
             skia_lib_arch: arm64
             cmake_osx_arch: arm64
-          - runner: macos-13
+          - runner: macos-15-intel
             asset_suffix: macos-x64
             skia_os: macos
             skia_arch: x64
