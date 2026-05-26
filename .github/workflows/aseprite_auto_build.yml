@@ -323,6 +323,19 @@ jobs:
           if [[ "${{ runner.os }}" == "Windows" ]] ; then
             mkdir -p package/bin
             cp -R aseprite/build/bin/* package/bin/
+            python - <<'PY'
+            import os
+            import pathlib
+            import shutil
+
+            openssl_bin = pathlib.Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "OpenSSL" / "bin"
+            for name in ("libcrypto-3-x64.dll", "libssl-3-x64.dll"):
+              source = openssl_bin / name
+              if not source.is_file():
+                raise FileNotFoundError(f"Required OpenSSL runtime DLL not found: {source}")
+              shutil.copy2(source, pathlib.Path("package/bin") / name)
+              print(f"Bundled {source}")
+            PY
             echo "# This file is here so Aseprite behaves as a portable program" > package/bin/aseprite.ini
             (cd package && 7z a -tzip "../$asset_name" "bin/*")
           else
