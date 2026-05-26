@@ -59,14 +59,17 @@ jobs:
               "macos-x64",
           }
 
-          def api_get(url):
+          def api_get(url, *, auth_token=None):
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "aseprite-auto-build-workflow",
+              }
+              if auth_token:
+                  headers["Authorization"] = f"Bearer {auth_token}"
+
               req = urllib.request.Request(
                   url,
-                  headers={
-                      "Authorization": f"Bearer {token}",
-                      "Accept": "application/vnd.github+json",
-                      "User-Agent": "aseprite-auto-build-workflow",
-                  },
+                  headers=headers,
               )
               with urllib.request.urlopen(req) as response:
                   return json.loads(response.read().decode("utf-8"))
@@ -112,7 +115,8 @@ jobs:
           if not force_rebuild:
               try:
                   existing = api_get(
-                      f"https://api.github.com/repos/{repo}/releases/tags/{release_tag}"
+                      f"https://api.github.com/repos/{repo}/releases/tags/{release_tag}",
+                      auth_token=token,
                   )
                   existing_names = {asset["name"] for asset in existing.get("assets", [])}
                   expected_names = {
