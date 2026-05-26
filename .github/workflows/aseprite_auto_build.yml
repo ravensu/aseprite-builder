@@ -186,17 +186,20 @@ jobs:
             skia_os: windows
             skia_arch: x64
             skia_lib_arch: x64
+            skia_library: skia.lib
           - runner: macos-latest
             asset_suffix: macos-arm64
             skia_os: macos
             skia_arch: arm64
             skia_lib_arch: arm64
+            skia_library: libskia.a
             cmake_osx_arch: arm64
           - runner: macos-15-intel
             asset_suffix: macos-x64
             skia_os: macos
             skia_arch: x64
             skia_lib_arch: x64
+            skia_library: libskia.a
             cmake_osx_arch: x86_64
     steps:
       - uses: actions/checkout@v4
@@ -283,7 +286,7 @@ jobs:
             -DLAF_BACKEND=skia
             -DSKIA_DIR="$(pwd)/aseprite/skia"
             -DSKIA_LIBRARY_DIR="$(pwd)/aseprite/skia/out/Release-${{ matrix.skia_lib_arch }}"
-            -DSKIA_LIBRARY="$(pwd)/aseprite/skia/out/Release-${{ matrix.skia_lib_arch }}/libskia.a"
+            -DSKIA_LIBRARY="$(pwd)/aseprite/skia/out/Release-${{ matrix.skia_lib_arch }}/${{ matrix.skia_library }}"
           )
 
           if [[ "${{ runner.os }}" == "macOS" ]] ; then
