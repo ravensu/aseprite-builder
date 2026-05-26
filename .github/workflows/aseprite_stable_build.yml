@@ -43,7 +43,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           ASEPRITE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aseprite_ref || '' }}
-          FORCE_REBUILD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rebuild || 'false' }}
+          FORCE_REBUILD: ${{ github.event_name == 'push' && 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_rebuild || 'false') }}
         run: |
           python - <<'PY'
           import json
