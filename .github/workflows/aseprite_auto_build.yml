@@ -40,7 +40,7 @@ jobs:
           ASEPRITE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aseprite_ref || '' }}
           FORCE_REBUILD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rebuild || 'false' }}
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           import re
@@ -59,25 +59,25 @@ jobs:
               "macos-x64",
           }
 
-          def api_get(url):
-              req = urllib.request.Request(
-                  url,
-                  headers={
-                      "Authorization": f"Bearer {token}",
-                      "Accept": "application/vnd.github+json",
-                      "User-Agent": "aseprite-auto-build-workflow",
-                  },
-              )
+          def api_get(url, *, use_auth=True):
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "aseprite-auto-build-workflow",
+              }
+              if use_auth and token:
+                  headers["Authorization"] = f"Bearer {token}"
+
+              req = urllib.request.Request(url, headers=headers)
               with urllib.request.urlopen(req) as response:
                   return json.loads(response.read().decode("utf-8"))
 
           def get_release_for_tag(tag):
               url = f"https://api.github.com/repos/aseprite/aseprite/releases/tags/{tag}"
-              return api_get(url)
+              return api_get(url, use_auth=False)
 
           def pick_latest_release():
               url = "https://api.github.com/repos/aseprite/aseprite/releases?per_page=20"
-              releases = api_get(url)
+              releases = api_get(url, use_auth=False)
               source_asset_pattern = re.compile(r"^Aseprite-.*-Source\.zip$")
               for release in releases:
                   assets = release.get("assets", [])
@@ -214,7 +214,11 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          python - <<'PY'
+          PYTHON_BIN="python3"
+          if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 ; then
+            PYTHON_BIN="python"
+          fi
+          "$PYTHON_BIN" - <<'PY'
           import pathlib
           import shutil
           import zipfile
@@ -244,7 +248,11 @@ jobs:
           set -euxo pipefail
           skia_url="$(bash aseprite/laf/misc/skia-url.sh release ${{ matrix.skia_os }} ${{ matrix.skia_arch }})"
           curl --retry 5 --retry-all-errors -L -o skia.zip "$skia_url"
-          python - <<'PY'
+          PYTHON_BIN="python3"
+          if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 ; then
+            PYTHON_BIN="python"
+          fi
+          "$PYTHON_BIN" - <<'PY'
           import pathlib
           import shutil
           import zipfile
