@@ -330,7 +330,11 @@ jobs:
 
           if [[ "${{ runner.os }}" == "Windows" ]] ; then
             mkdir -p package/bin
-            cp -R aseprite/build/bin/* package/bin/
+            cp aseprite/build/bin/aseprite.exe package/bin/
+            cp -R aseprite/build/bin/data package/bin/
+            if [[ -f aseprite/build/bin/icudtl.dat ]] ; then
+              cp aseprite/build/bin/icudtl.dat package/bin/
+            fi
             openssl_bin="/c/Program Files/OpenSSL/bin"
             for dll in libcrypto-3-x64.dll libssl-3-x64.dll ; do
               test -f "$openssl_bin/$dll"
